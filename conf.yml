@@ -1,12 +1,11 @@
 #Атакуемый URL
-#URL: http://95.216.152.144:8080/core/api/v3/public/auth/login
-URL: https://qa-portal.tradelize.com
-#URL: http://triolan.com
+URL: http://golosary
 
-#Количество генераторов подключений 
+
+#Количество генераторов подключений
 dial_count_workers: 1000
 #Таймаут пустых пакетов для поддержки коннекта
-sleep_interval: 2s
+sleep_interval: 20ms
 #Время проведения теста
-test_duration: 10m
+test_duration: 15m
 
