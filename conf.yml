@@ -5,7 +5,7 @@ URL: http://golosary
 #Количество генераторов подключений
 dial_count_workers: 1000
 #Таймаут пустых пакетов для поддержки коннекта
-sleep_interval: 20ms
+sleep_interval: 1s
 #Время проведения теста
 test_duration: 15m
 
